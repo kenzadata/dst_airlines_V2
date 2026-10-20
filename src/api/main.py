@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pandas as pd
@@ -105,7 +105,7 @@ def _persist_prediction(response: PredictionResponse) -> None:
                 Prediction(
                     id=str(uuid4()),
                     flight_id=response.flight_id,
-                    predicted_at=datetime.now(timezone.utc),
+                    predicted_at=datetime.now(UTC),
                     delay_probability=response.delay_probability,
                     predicted_delay_minutes=response.predicted_delay_minutes,
                     model_version=response.model_version,

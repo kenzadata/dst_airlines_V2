@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import mlflow
@@ -89,7 +89,7 @@ def load_training_data(processed_dir: Path = PROCESSED_DATA_DIR) -> pd.DataFrame
 
 
 def train(df: pd.DataFrame, model_version: str | None = None) -> tuple[DelayModel, dict[str, float]]:
-    model_version = model_version or datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    model_version = model_version or datetime.now(UTC).strftime("%Y%m%d%H%M%S")
 
     X = build_features(df)
     y_delayed = df["delayed"].astype(int)

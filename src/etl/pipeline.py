@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -56,7 +56,7 @@ def flights_to_dataframe(records: list[dict[str, Any]]) -> pd.DataFrame:
             last_contact = state.get("last_contact")
             if not icao24 or not last_contact:
                 continue
-            observed_at = datetime.fromtimestamp(last_contact, tz=timezone.utc)
+            observed_at = datetime.fromtimestamp(last_contact, tz=UTC)
             rows.append(
                 {
                     "flight_id": f"{icao24}_{observed_at:%Y%m%d}",
@@ -140,7 +140,7 @@ def join_flights_weather(flights_df: pd.DataFrame, weather_df: pd.DataFrame) -> 
 
 def write_processed(df: pd.DataFrame, output_dir: Path = PROCESSED_DATA_DIR) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     output_path = output_dir / f"flights_weather_{timestamp}.csv"
     df.to_csv(output_path, index=False)
     logger.info("%s lignes écrites dans %s", len(df), output_path)

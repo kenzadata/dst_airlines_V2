@@ -19,7 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -139,7 +139,7 @@ def build_dim_aircraft(
     dim = master.merge(acftref, on="MFR_MDL_CODE", how="left")
 
     dim["YEAR_MFR"] = pd.to_numeric(dim["YEAR_MFR"], errors="coerce")
-    dim["AIRCRAFT_AGE"] = (current_year or datetime.now(timezone.utc).year) - dim["YEAR_MFR"]
+    dim["AIRCRAFT_AGE"] = (current_year or datetime.now(UTC).year) - dim["YEAR_MFR"]
     # Années FAA parfois vides ou aberrantes -> âge inconnu plutôt que faux
     dim.loc[(dim["YEAR_MFR"] < 1930) | (dim["AIRCRAFT_AGE"] < 0), ["YEAR_MFR", "AIRCRAFT_AGE"]] = np.nan
 
