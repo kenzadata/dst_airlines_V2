@@ -1,0 +1,13 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY src/ src/
+COPY data/reference/ data/reference/
+
+ENV PYTHONPATH=/app
+
+CMD ["sh", "-c", "python -m src.collector.flights_client && python -m src.collector.weather_client && python -m src.etl.pipeline"]

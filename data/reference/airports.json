@@ -1,0 +1,76 @@
+{
+  "ATL": {
+    "icao": "KATL",
+    "name": "Hartsfield-Jackson Atlanta International",
+    "city": "Atlanta",
+    "country": "US",
+    "latitude": 33.6367,
+    "longitude": -84.4281,
+    "elevation_m": 313,
+    "timezone": "America/New_York",
+    "bbox": {
+      "lamin": 33.49,
+      "lamax": 33.79,
+      "lomin": -84.73,
+      "lomax": -84.13
+    }
+  },
+  "JFK": {
+    "icao": "KJFK",
+    "name": "John F Kennedy International",
+    "city": "New York",
+    "country": "US",
+    "latitude": 40.6398,
+    "longitude": -73.7789,
+    "elevation_m": 4,
+    "timezone": "America/New_York",
+    "bbox": {
+      "lamin": 40.49,
+      "lamax": 40.79,
+      "lomin": -74.08,
+      "lomax": -73.48
+    }
+  },
+  "CDG": {
+    "icao": "LFPG",
+    "name": "Paris Charles de Gaulle",
+    "city": "Paris",
+    "country": "FR",
+    "latitude": 49.0097,
+    "longitude": 2.5479,
+    "bbox": {
+      "lamin": 48.86,
+      "lamax": 49.16,
+      "lomin": 2.25,
+      "lomax": 2.85
+    }
+  },
+  "ORY": {
+    "icao": "LFPO",
+    "name": "Paris Orly",
+    "city": "Paris",
+    "country": "FR",
+    "latitude": 48.7233,
+    "longitude": 2.3794,
+    "bbox": {
+      "lamin": 48.57,
+      "lamax": 48.87,
+      "lomin": 2.08,
+      "lomax": 2.68
+    }
+  },
+  "NCE": {
+    "icao": "LFMN",
+    "name": "Nice Côte d'Azur",
+    "city": "Nice",
+    "country": "FR",
+    "latitude": 43.6584,
+    "longitude": 7.2159,
+    "bbox": {
+      "lamin": 43.51,
+      "lamax": 43.81,
+      "lomin": 7.06,
+      "lomax": 7.36
+    }
+  }
+}

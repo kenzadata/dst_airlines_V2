@@ -1,0 +1,35 @@
+# Collecte
+requests>=2.31
+httpx>=0.27
+meteostat>=1.6,<2.0   # API 1.x (Hourly, Point, Stations)
+
+# Config
+python-dotenv>=1.0
+
+# Data / ETL
+pandas>=2.1
+pyarrow>=14.0
+SQLAlchemy>=2.0
+psycopg2-binary>=2.9
+
+# ML
+scikit-learn>=1.4
+xgboost>=2.0
+mlflow>=2.11
+shap>=0.45
+joblib>=1.3
+
+# Restitution
+dash>=2.16
+plotly>=5.20
+
+# API
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2.6
+prometheus-fastapi-instrumentator>=7.0
+
+# Tests
+pytest>=8.0
+pytest-mock>=3.14
+responses>=0.25
