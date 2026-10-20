@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 
 from dotenv import load_dotenv
-from sqlalchemy import Column, DateTime, Float, String, create_engine
+from sqlalchemy import Boolean, Column, DateTime, Float, String, create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 load_dotenv()
@@ -31,6 +31,24 @@ class Flight(Base):
     scheduled_arrival = Column(DateTime, nullable=True)
     actual_arrival = Column(DateTime, nullable=True)
     status = Column(String, nullable=True)
+
+
+class AircraftPosition(Base):
+    """Position d'un aéronef à un instant (OpenSky), pour la carte temps réel."""
+
+    __tablename__ = "aircraft_positions"
+
+    id = Column(String, primary_key=True)  # icao24 + horodatage du dernier contact
+    icao24 = Column(String, nullable=False, index=True)
+    callsign = Column(String, nullable=True)
+    airport = Column(String, nullable=False)
+    observed_at = Column(DateTime, nullable=False, index=True)
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
+    altitude_m = Column(Float, nullable=True)
+    velocity_ms = Column(Float, nullable=True)
+    heading = Column(Float, nullable=True)
+    on_ground = Column(Boolean, nullable=True)
 
 
 class Weather(Base):
@@ -56,12 +74,24 @@ class Prediction(Base):
     model_version = Column(String, nullable=False)
 
 
+def sqlalchemy_url(url: str) -> str:
+    """Rend le pilote PostgreSQL explicite (`postgresql+psycopg2://`).
+
+    Depuis SQLAlchemy 2.1, `postgresql://` désigne psycopg 3, que le projet
+    n'installe pas : sans pilote explicite, l'API plante dans les conteneurs.
+    """
+    for prefix in ("postgresql://", "postgres://"):
+        if url.startswith(prefix):
+            return "postgresql+psycopg2://" + url.removeprefix(prefix)
+    return url
+
+
 def get_engine(database_url: str | None = None):
     url = database_url or os.environ.get(
         "DATABASE_URL", "sqlite:///./data/processed/dst_airlines.db"
     )
     connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
-    return create_engine(url, connect_args=connect_args)
+    return create_engine(sqlalchemy_url(url), connect_args=connect_args)
 
 
 def init_db(engine=None) -> None:

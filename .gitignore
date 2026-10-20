@@ -34,3 +34,7 @@ infra/terraform/.terraform.lock.hcl
 
 # Archives téléchargées (le ZIP du repo DST-AIRLINES contient un notebook avec une clé API)
 /*.zip
+
+# Résultats de scoring (src/ml/score.py)
+data/output_scoring/*
+!data/output_scoring/.gitkeep

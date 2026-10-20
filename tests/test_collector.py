@@ -157,3 +157,33 @@ def test_meteostat_save_raw_writes_parquet(tmp_path):
 
     assert output_path.name == "weather_history_JFK.parquet"
     assert meteostat_client.save_raw("JFK", pd.DataFrame(), output_dir=tmp_path) is None
+
+
+def test_bts_download_month_streams_to_file_and_skips_existing(tmp_path, monkeypatch):
+    from src.collector import bts_client
+
+    calls = []
+    response = MagicMock(status_code=200)
+    response.__enter__.return_value = response
+    response.iter_content.return_value = [b"PK", b"zip"]
+    monkeypatch.setattr(bts_client.requests, "get", lambda url, **k: calls.append(url) or response)
+
+    path = bts_client.download_month(2024, 1, output_dir=tmp_path)
+    bts_client.download_month(2024, 1, output_dir=tmp_path)
+
+    assert path.name == "bts_raw_2024_01.zip"
+    assert path.read_bytes() == b"PKzip"
+    assert calls == [bts_client.PREZIP_URL.format(year=2024, month=1)]
+
+
+def test_bts_download_network_error_returns_none(tmp_path, monkeypatch):
+    from src.collector import bts_client
+
+    def fake_get(*args, **kwargs):
+        raise bts_client.requests.RequestException("boom")
+
+    monkeypatch.setattr(bts_client.requests, "get", fake_get)
+    monkeypatch.setattr(bts_client.time, "sleep", lambda *_: None)
+
+    assert bts_client.download_month(2024, 2, output_dir=tmp_path) is None
+    assert list(tmp_path.iterdir()) == []

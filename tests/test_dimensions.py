@@ -127,3 +127,17 @@ def test_build_fl_time_utc_converts_local_departure_to_utc():
 def test_floor_to_hour_truncates():
     s = pd.Series(pd.to_datetime(["2024-01-15 13:59"], utc=True))
     assert dimensions.floor_to_hour(s).iloc[0] == pd.Timestamp("2024-01-15 13:00", tz="UTC")
+
+
+def test_extract_faa_registry_from_zip(tmp_path):
+    import zipfile
+
+    zip_path = tmp_path / "ReleasableAircraft.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("MASTER.txt", "N-NUMBER,\n")
+        zf.writestr("ACFTREF.txt", "CODE,\n")
+        zf.writestr("DEREG.txt", "")
+
+    assert dimensions.extract_faa_registry(zip_path) is True
+    assert sorted(p.name for p in tmp_path.glob("*.txt")) == ["ACFTREF.txt", "MASTER.txt"]
+    assert dimensions.extract_faa_registry(tmp_path / "absent" / "ReleasableAircraft.zip") is False

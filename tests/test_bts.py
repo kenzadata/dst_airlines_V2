@@ -76,3 +76,23 @@ def test_process_file_reads_zip_and_writes_monthly_parquet(tmp_path, monkeypatch
     assert output_path.name == "bts_2024_01.parquet"
     assert len(pd.read_parquet(output_path)) == 2
     assert not zip_path.exists()
+
+
+def test_read_bts_file_maps_prezip_columns_and_skips_unused(tmp_path):
+    csv_path = tmp_path / "prezip.csv"
+    pd.DataFrame({"FlightDate": ["2024-01-15"], "IATA_CODE_Reporting_Airline": ["DL"], "Origin": ["ATL"],
+                  "DepDelay": [12.0], "Div1Airport": ["XXX"]}).to_csv(csv_path, index=False)
+
+    df = bts.read_bts_file(csv_path)
+
+    assert list(df.columns) == ["FL_DATE", "OP_CARRIER", "ORIGIN", "DEP_DELAY"]
+
+
+def test_derive_dep_delay_matches_bts_definition_across_midnight():
+    crs = pd.Series([815, 2350, 10, 1200], dtype="Int64")
+    dep = pd.Series([830, 10, 2355, None], dtype="Int64")
+
+    delay = bts.derive_dep_delay(crs, dep)
+
+    assert delay.tolist()[:3] == [15.0, 20.0, -15.0]
+    assert pd.isna(delay.iloc[3])

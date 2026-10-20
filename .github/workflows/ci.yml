@@ -8,6 +8,23 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+
+    # PostgreSQL pour le test d'intégration de l'entrepôt (tests/test_integration_warehouse.py)
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: dst
+          POSTGRES_PASSWORD: dst
+          POSTGRES_DB: dst_airlines
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dst -d dst_airlines"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
 
@@ -23,4 +40,6 @@ jobs:
         run: pip install ruff==0.17.1 && ruff check src tests
 
       - name: Tests
+        env:
+          WAREHOUSE_TEST_DATABASE_URL: postgresql://dst:dst@localhost:5432/dst_airlines
         run: pytest -v

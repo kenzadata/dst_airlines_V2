@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,8 @@ AIRPORTS_DAT_PATH = RAW_DATA_DIR / "airports.dat"
 CARRIERS_LOOKUP_PATH = REFERENCE_DIR / "L_UNIQUE_CARRIERS.csv"
 FAA_MASTER_PATH = RAW_DATA_DIR / "faa" / "MASTER.txt"
 FAA_ACFTREF_PATH = RAW_DATA_DIR / "faa" / "ACFTREF.txt"
+# Téléchargement manuel depuis un navigateur (registry.faa.gov refuse les clients scriptés)
+FAA_REGISTRY_ZIP_PATH = RAW_DATA_DIR / "faa" / "ReleasableAircraft.zip"
 
 DIM_AIRPORT_PATH = PROCESSED_DATA_DIR / "dim_airport.csv"
 DIM_AIRLINE_PATH = PROCESSED_DATA_DIR / "dim_airline.csv"
@@ -118,6 +121,25 @@ def _read_faa_csv(path: Path, columns: dict[str, str]) -> pd.DataFrame:
     df.columns = [c.strip() for c in df.columns]
     df = df.rename(columns=columns)
     return df.apply(lambda s: s.str.strip())
+
+
+def extract_faa_registry(
+    zip_path: Path = FAA_REGISTRY_ZIP_PATH, output_dir: Path | None = None
+) -> bool:
+    """Extrait MASTER.txt et ACFTREF.txt du ZIP FAA s'ils ne sont pas déjà présents.
+
+    Retourne True si les deux fichiers sont disponibles après l'appel.
+    """
+    output_dir = output_dir or zip_path.parent
+    wanted = ["MASTER.txt", "ACFTREF.txt"]
+    if all((output_dir / name).exists() for name in wanted):
+        return True
+    if not zip_path.exists():
+        return False
+    with zipfile.ZipFile(zip_path) as zf:
+        for name in wanted:
+            zf.extract(name, output_dir)
+    return True
 
 
 def build_dim_aircraft(
@@ -277,7 +299,10 @@ def run(target: str = "all") -> None:
     if target in ("airlines", "all"):
         _write(build_dim_airline(), DIM_AIRLINE_PATH)
     if target in ("aircraft", "all"):
-        _write(build_dim_aircraft(load_flight_tails()), DIM_AIRCRAFT_PATH)
+        if extract_faa_registry():
+            _write(build_dim_aircraft(load_flight_tails()), DIM_AIRCRAFT_PATH)
+        else:
+            logger.warning("Registre FAA absent (%s) : dim_aircraft non construite", FAA_REGISTRY_ZIP_PATH)
     if target in ("weather", "all"):
         _write(build_dim_weather(), DIM_WEATHER_PATH)
     if target in ("weather-realtime", "all"):

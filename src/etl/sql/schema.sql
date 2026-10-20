@@ -64,7 +64,9 @@ CREATE TABLE IF NOT EXISTS fact_flights (
     , dest                  CHAR(3)      NOT NULL
     , crs_dep_time          SMALLINT
     , dep_time              SMALLINT
+    , dep_delay             REAL
     , arr_time              SMALLINT
+    , arr_delay             REAL
     , cancelled             SMALLINT
     , diverted              SMALLINT
     , crs_elapsed_time      REAL
@@ -86,6 +88,10 @@ CREATE TABLE IF NOT EXISTS fact_flights (
     -- tail_num (avions non-US absents du registre FAA) ni sur la météo
     -- (heures sans relevé) : ces jointures se font en LEFT JOIN.
 );
+
+-- Bases créées avant l'ajout des retards observés (cible du modèle ML)
+ALTER TABLE fact_flights ADD COLUMN IF NOT EXISTS dep_delay REAL;
+ALTER TABLE fact_flights ADD COLUMN IF NOT EXISTS arr_delay REAL;
 
 CREATE INDEX IF NOT EXISTS idx_fact_flights_fl_date  ON fact_flights (fl_date);
 CREATE INDEX IF NOT EXISTS idx_fact_flights_origin   ON fact_flights (origin);

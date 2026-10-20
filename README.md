@@ -71,32 +71,36 @@ dst-airlines/
 ├── requirements.txt
 ├── data/
 │   ├── raw/                # données brutes collectées (non versionnées)
-│   └── processed/          # données nettoyées / features
+│   ├── processed/          # données nettoyées / features
+│   └── output_scoring/     # résultats de src/ml/score.py (non versionnés)
 ├── src/
 │   ├── collector/          # scripts d'appel aux API (vols, météo)
 │   │   ├── flights_client.py       # OpenSky, positions temps réel
 │   │   ├── weather_client.py       # Open-Meteo, prévisions
+│   │   ├── bts_client.py           # vols historiques BTS + table des compagnies
 │   │   ├── openflights_client.py   # référentiel aéroports (dim_airport)
 │   │   ├── meteostat_client.py     # météo horaire historique (dim_weather)
 │   │   └── openweather_client.py   # météo temps réel pour l'inférence
 │   ├── etl/                # nettoyage, jointures, construction des features
-│   │   ├── pipeline.py             # temps réel OpenSky -> flights/weather
+│   │   ├── pipeline.py             # temps réel OpenSky -> flights/weather/aircraft_positions
 │   │   ├── bts.py                  # transform des vols historiques BTS
 │   │   ├── dimensions.py           # transform des dimensions + clés UTC
 │   │   ├── warehouse.py            # load du schéma en étoile (PostgreSQL)
 │   │   └── sql/schema.sql
 │   ├── ml/                 # entraînement, évaluation, sérialisation du modèle
-│   │   ├── train.py
-│   │   └── model.py
+│   │   ├── dataset.py              # jeu d'entraînement SQL depuis l'entrepôt
+│   │   ├── model.py                # features + modèles (gradient boosting)
+│   │   ├── train.py                # sélection, optimisation, MLflow
+│   │   ├── evaluate.py             # analyses et figures du rapport de modélisation
+│   │   └── score.py                # scoring de 100 vols via l'API -> data/output_scoring/
 │   ├── api/                # service FastAPI exposant /predict
 │   │   ├── main.py
 │   │   └── schemas.py
 │   └── dashboard/          # app Dash de visualisation
-│       └── app.py
-├── tests/
-│   ├── test_etl.py
-│   ├── test_api.py
-│   └── test_model.py
+│       ├── app.py                  # 3 onglets : carte, historique, prédiction
+│       └── queries.py              # lectures SQL (agrégations côté base)
+├── tests/                  # unitaires + intégration PostgreSQL (section 13)
+├── docs/                   # rapport de modélisation, résultats de scoring, figures
 ├── notebooks/               # exploration, EDA, prototypage modèle
 └── infra/
     ├── Dockerfile.api
@@ -224,6 +228,7 @@ PILOT_AIRPORTS=ATL,JFK
 # API applicative
 API_HOST=0.0.0.0
 API_PORT=8000
+API_URL=http://localhost:8000   # API appelée par src/ml/score.py
 
 # MLflow (optionnel)
 MLFLOW_TRACKING_URI=
@@ -266,15 +271,79 @@ python -m src.dashboard.app
 ### Entrepôt historique (extract → transform → load)
 
 ```bash
-# Prérequis manuels : ZIPs BTS dans data/raw/bts/, MASTER.txt + ACFTREF.txt (FAA)
-# dans data/raw/faa/, L_UNIQUE_CARRIERS.csv (BTS) dans data/reference/.
-python -m src.collector.openflights_client          # data/raw/airports.dat
-python -m src.collector.meteostat_client            # data/raw/weather_history_*.parquet
-python -m src.etl.bts                               # data/processed/bts/bts_YYYY_MM.parquet
+# Extract (~700 Mo téléchargés pour 24 mois, ~1 h)
+python -m src.collector.bts_client --start 2024-01 --end 2025-12   # data/raw/bts/*.zip + table des compagnies
+python -m src.collector.openflights_client                          # data/raw/airports.dat
+python -m src.collector.meteostat_client --start 2024-01-01 --end 2025-12-31
+
+# Transform
+python -m src.etl.bts --delete-source               # data/processed/bts/bts_YYYY_MM.parquet (ZIPs supprimés)
 python -m src.etl.dimensions all                    # data/processed/dim_*.{csv,parquet}
-python -m src.etl.warehouse all                     # schéma + chargement PostgreSQL
-# ou en une commande : just warehouse
+
+# Load
+python -m src.etl.warehouse all                     # schéma + chargement PostgreSQL (idempotent)
+
+# ou en une commande : just warehouse   (just warehouse 2025-01 2025-06 pour une autre période)
 ```
+
+Registre des avions FAA (optionnel, ajoute l'âge et le modèle de l'avion) : registry.faa.gov refuse les téléchargements scriptés. Télécharger `ReleasableAircraft.zip` depuis un navigateur (https://registry.faa.gov/database/ReleasableAircraft.zip), le déposer dans `data/raw/faa/`, puis relancer `python -m src.etl.dimensions aircraft && python -m src.etl.warehouse aircraft`.
+
+### Modèle de prédiction et MLflow (étape 3)
+
+```bash
+python -m src.ml.train          # ou : just train   (~2 min sur 24 mois, ~1,8 Go de RAM)
+python -m src.ml.evaluate       # ou : just evaluate — figures et chiffres de docs/figures/
+mlflow ui --backend-store-uri sqlite:///mlflow.db --port 5000   # ou : just mlflow-ui
+```
+
+Démarche, résultats et limites détaillés : **[rapport de modélisation](docs/rapport_modelisation.md)**.
+
+### Scoring d'un échantillon de vols via l'API (`src/ml/score.py`)
+
+`score.py` vérifie le modèle **tel qu'il est servi en production** : il passe par l'API, alors que `evaluate.py` évalue le modèle chargé en mémoire. Il :
+
+1. vérifie que l'API répond (`GET /health`) et qu'un modèle est chargé ;
+2. tire au hasard **100 vols opérés** dans l'entrepôt, parmi les **3 derniers mois** (la période de test que le modèle n'a jamais vue). Le tirage est reproductible : même graine, mêmes vols ;
+3. envoie chaque vol à `POST /predict` avec les seules informations connues avant le départ (vol programmé + météo à l'heure prévue). Le retard réel n'est jamais envoyé ;
+4. confronte chaque prédiction au retard réellement observé, affiche le résultat sous forme de DataFrame avec un résumé, et l'enregistre dans `data/output_scoring/scoring_<version du modèle>_<horodatage>.csv`.
+
+```bash
+docker compose up -d db api      # l'API doit tourner et servir un modèle entraîné
+python -m src.ml.score           # ou : just score
+python -m src.ml.score --n 500 --months 1 --seed 7 --api-url http://localhost:8000
+python -m src.ml.score --docs    # ou : just score-docs — publie aussi le résultat dans docs/
+```
+
+| Option | Défaut | Rôle |
+|---|---|---|
+| `--n` | 100 | Nombre de vols scorés |
+| `--months` | 3 | Tirage parmi les N derniers mois de l'entrepôt |
+| `--seed` | 42 | Graine du tirage (même graine = mêmes vols) |
+| `--api-url` | `$API_URL` ou `http://localhost:8000` | API appelée |
+| `--docs` | désactivé | Publie le résultat dans [`docs/resultats_scoring.md`](docs/resultats_scoring.md) (contexte, résumé, matrice de confusion, tableau des vols trié par probabilité) et copie le CSV dans `docs/scoring/` |
+
+Colonnes du fichier produit : les informations du vol (`flight_id`, `fl_date`, `crs_dep_time`, `origin`, `dest`, `op_carrier`, `tail_num`, `distance`, météo `temp`, `prcp`, `wspd`, `pres`, `coco`…), la réponse de l'API (`delay_probability`, `predicted_delayed`, `predicted_delay_minutes`, `model_version`), la réalité (`actual_delayed` = retard ≥ 15 min, `actual_delay_minutes`) et `error` si l'appel a échoué pour ce vol. Un échec isolé n'interrompt pas le lot. Le résumé affiché donne le taux de vols prédits en retard et réellement en retard, l'exactitude, la précision, le rappel, la probabilité moyenne des vols réellement en retard et à l'heure, et l'erreur moyenne en minutes.
+
+Exemple (modèle `20261020225807`, graine 42, publié dans [`docs/resultats_scoring.md`](docs/resultats_scoring.md)) : 100 vols scorés, 0 erreur ; 24 % prédits en retard pour 19 % réellement en retard ; exactitude 73 %, rappel 42 %, précision 33 % ; probabilité moyenne de 24 % pour les vols réellement en retard contre 16 % pour les autres. Sur 100 vols, ces chiffres fluctuent ; les résultats de référence, sur 103 583 vols, sont dans le rapport de modélisation.
+
+Chaque appel est aussi enregistré par l'API dans sa table `predictions`, comme toute prédiction.
+
+- **Cible** : retard au départ ≥ 15 min (classification, seuil officiel du DOT) et minutes de retard attendues (régression), sur les vols non annulés.
+- **Features**, toutes connues avant le départ : aéroport de départ, destination, compagnie, heure programmée, jour de la semaine, mois, distance, durée programmée, âge de l'avion, météo à l'heure prévue (température, précipitations, vent, pression, code condition). Les heures réelles et les causes de retard sont exclues (fuite de la cible).
+- **Validation** : les 3 derniers mois sont mis de côté comme jeu de test ; sélection de modèle et hyperparamètres par validation croisée **temporelle** (`TimeSeriesSplit`) sur la période d'entraînement.
+- **Optimisation** : comparaison d'une référence naïve, d'une régression logistique et d'un gradient boosting (`HistGradientBoosting`) avec recherche aléatoire d'hyperparamètres ; seuil de décision choisi pour maximiser le F1.
+- **Interprétabilité** : importance par permutation de chaque feature, exposée par l'API et le dashboard.
+- **MLflow** : un run par entraînement (paramètres, métriques de test, importances), un run enfant par modèle candidat, classifieur et régresseur journalisés et inscrits au Model Registry (`dst-airlines-delay-classifier`, `dst-airlines-delay-regressor`). L'API et le dashboard chargent le dernier `models/delay_model_*.pkl`.
+
+### Dashboard (étape 3)
+
+`python -m src.dashboard.app` puis http://localhost:8050 :
+
+| Onglet | Contenu | Source |
+|---|---|---|
+| Carte temps réel | Dernière position des avions autour de l'aéroport choisi (au sol / en vol, altitude, vitesse), rafraîchie chaque minute | `aircraft_positions` (OpenSky) |
+| Retards historiques & avions | Indicateurs (vols, taux de retard, retard moyen, annulations), retard par heure, jour, mois et compagnie ; tableau des avions (filtrable, triable) et historique des vols de l'avion sélectionné | Entrepôt BTS |
+| Prédiction | Formulaire vol + météo → probabilité de retard, verdict, minutes attendues ; métriques de test du modèle et facteurs principaux | Dernier modèle entraîné |
 
 ### Option 2 — Workflow rapide avec `just`
 
@@ -304,6 +373,16 @@ just build
 
 # Nettoyer conteneurs et volumes
 just clean
+
+# Entrepôt, modèle, tests
+just warehouse          # extract -> transform -> load (2024-01 -> 2025-12)
+just train              # entraînement + MLflow
+just evaluate           # figures du rapport de modélisation
+just score              # scoring de 100 vols via l'API -> data/output_scoring/
+just score-docs         # idem + publication dans docs/resultats_scoring.md
+just mlflow-ui          # http://localhost:5000
+just test               # lint + tests unitaires (comme la CI)
+just test-integration   # + test d'intégration PostgreSQL
 ```
 
 ### Vérification rapide
@@ -357,15 +436,15 @@ Quand tu (Claude Code) interviens sur ce repo :
 
 ## 12. Évaluation de conformité au cahier des charges
 
-*État au 20/10/2026, commit `55b31d6`. Évaluation faite à partir du code, des tests (50 tests, CI verte), d'un chargement de l'entrepôt sur un PostgreSQL de test et de `docker compose config`. La stack Docker complète n'a pas été relancée pour cette évaluation.*
+*État au 21/10/2026. Évaluation faite à partir du code, des tests (77 tests dont 1 d'intégration PostgreSQL), de l'entrepôt chargé avec les vols BTS réels 2024-2025, d'un entraînement complet du modèle et de la stack Docker relancée (API, dashboard, collecteur, Prometheus). Étapes 1, 2, 4 et 5 : évaluation du 20/10/2026, mise à jour seulement là où l'étape 3 les a fait évoluer.*
 
 ### Synthèse
 
 | Étape | Livrable | Statut | En une phrase |
 |---|---|---|---|
-| 1. Récolte des données | — | ✅ Largement conforme | 5 sources API/fichiers collectées via `requests`, référentiels IATA en place ; ni webscraping ni Postman. |
-| 2. Organisation des données + ETL | n°4 | ✅ Conforme, avec réserves | Schéma en étoile détaillé et pipeline ETL testé ; pas encore chargé avec les vraies données BTS, et deux modèles de données coexistent. |
-| 3. Consommation (dashboard + ML + MLflow) | n°5 | 🟡 Partiel | Le modèle est entraîné sur des **données synthétiques**, sans optimisation ; le dashboard ne représente pas les vols par avion. |
+| 1. Récolte des données | — | ✅ Largement conforme | 6 sources API/fichiers collectées via `requests`, BTS automatisé, référentiels IATA en place ; ni webscraping ni Postman. |
+| 2. Organisation des données + ETL | n°4 | ✅ Conforme | Schéma en étoile chargé avec 884 451 vols réels (ATL/JFK, 2024-2025) et 35 088 relevés météo ; deux modèles de données coexistent (temps réel / historique). |
+| 3. Consommation (dashboard + ML + MLflow) | n°5 | ✅ Conforme | Modèle entraîné sur les vols réels, comparé et optimisé en validation temporelle, versionné dans le Model Registry MLflow ; dashboard à 3 onglets dont carte et vue par avion. Voir le [rapport de modélisation](docs/rapport_modelisation.md). |
 | 4. Déploiement (API + Docker) | n°6 | 🟡 Partiel | Conteneurs et `docker-compose` en place, mais l'API ne fait que prédire : elle ne permet pas de requêter les bases. |
 | 5. Automatisation de l'infrastructure | n°7 | ❌ Non conforme | Seule la CI (lint + tests) existe ; pas de CD, de blue/green, de KPI DevOps, d'alerting ni d'IaC appliquée. |
 | 6. Soutenance | — | ⏳ À venir | — |
@@ -374,7 +453,7 @@ Quand tu (Claude Code) interviens sur ce repo :
 
 **En place**
 - Vols temps réel : API OpenSky `/states/all` ([flights_client.py](src/collector/flights_client.py)), avec retries et gestion du quota (HTTP 429).
-- Vols historiques : BTS On-Time Performance (téléchargement manuel des ZIP), la seule source gratuite qui contient les horaires réels et les causes de retard.
+- Vols historiques : BTS On-Time Performance, téléchargé automatiquement mois par mois ([bts_client.py](src/collector/bts_client.py)) : la seule source gratuite qui contient les horaires réels et les retards observés.
 - Météo : Open-Meteo (prévisions), Meteostat (historique horaire), OpenWeather (temps réel pour l'inférence).
 - Référentiels : codes IATA/ICAO des aéroports (OpenFlights + [airports.json](data/reference/airports.json)), codes compagnies (BTS `L_UNIQUE_CARRIERS`), avions (registre FAA).
 - Les choix de routes sont argumentés dans les docstrings. Par exemple, OpenSky gratuit ne fournit pas d'horaires, d'où le recours à BTS pour l'entraînement.
@@ -382,7 +461,7 @@ Quand tu (Claude Code) interviens sur ce repo :
 **Écarts**
 - Aucune technique de webscraping : les référentiels viennent de fichiers ou d'API.
 - Pas de collection Postman pour documenter et tester les appels.
-- Trois sources sont des téléchargements manuels (BTS, FAA, compagnies), non automatisés.
+- Le registre FAA des avions reste un téléchargement manuel : registry.faa.gov refuse les clients scriptés. Il est optionnel (sans lui, l'âge et le modèle de l'avion sont absents).
 
 ### Étape 2 — Organisation des données et pipeline ETL (Livrable n°4) : ✅ conforme, avec réserves
 
@@ -394,24 +473,29 @@ Quand tu (Claude Code) interviens sur ce repo :
 
 **Réserves**
 - **Deux modèles de données coexistent** : le modèle temps réel `flights`/`weather`/`predictions` (SQLAlchemy) et l'entrepôt en étoile. Leur articulation n'est pas encore documentée, et la section 5 présente encore surtout le premier.
-- L'entrepôt n'a encore **jamais été chargé avec les vraies données BTS** (aucun ZIP dans `data/raw/bts/`).
+- Le registre FAA doit être déposé manuellement pour alimenter `dim_aircraft` (fait : 5 261 avions, 97,8 % des vols rattachés à leur avion).
 - Pas d'orchestration (cron, Airflow) : les étapes se lancent à la main ou via `just warehouse`.
 - Une seule technologie de stockage (SQL) : c'est acceptable (« 1 ou plusieurs bases »), mais aucune des autres briques proposées (MongoDB, Elasticsearch, Spark, DBT…) n'est utilisée.
 
-### Étape 3 — Consommation des données (Livrable n°5) : 🟡 partiel
+### Étape 3 — Consommation des données (Livrable n°5) : ✅ conforme
 
-**En place**
-- Modèle double ([model.py](src/ml/model.py)) : un classifieur (probabilité de retard) et un régresseur (minutes de retard), à base de RandomForest, qui exposent l'importance des features (exigence d'interprétabilité).
-- MLflow branché ([train.py](src/ml/train.py)) : paramètres, métriques et importances sont journalisés.
-- Dashboard Dash ([app.py](src/dashboard/app.py)) : tableau des vols suivis, statuts, facteurs de retard.
+Détail de la démarche, des résultats et des limites : **[docs/rapport_modelisation.md](docs/rapport_modelisation.md)**.
 
-**Écarts bloquants pour le livrable**
-- **Le modèle n'est pas entraîné sur de vraies données.** Faute de CSV labellisé, `train.py` génère un jeu synthétique où le retard est fabriqué à partir de la météo. Le ROC AUC de 0,89 enregistré dans MLflow mesure donc la capacité à retrouver une formule inventée, pas des retards réels. Les vols BTS de l'entrepôt sont la source à brancher.
-- **Les features ne sont pas alignées entre entraînement et entrepôt.** Le modèle attend `temperature`, `wind_speed`, `precipitation`, `visibility` (Open-Meteo), alors que `dim_weather` fournit `temp`, `wspd`, `prcp`, `pres`, `coco` (Meteostat, sans visibilité). Il faut choisir un jeu commun.
-- **Pas de cible de retard propre** : les colonnes `DEP_DELAY` et `ARR_DELAY` ne sont pas extraites de BTS, il faut les ajouter au téléchargement.
-- **Aucune optimisation** : pas de recherche d'hyperparamètres, de validation croisée ni de comparaison de modèles, alors que le livrable demande un algorithme « optimisé ».
-- **Versionning MLflow incomplet** : 1 seul run, le modèle n'est pas journalisé comme artefact MLflow et aucun modèle n'est inscrit au Model Registry. Les versions vivent dans des `.pkl` locaux.
-- **Le dashboard ne « représente pas les vols des différents avions »** : il n'y a ni carte des positions OpenSky (latitude/longitude pourtant collectées), ni vue par avion ou par compagnie, ni filtre interactif.
+**Algorithme de prédiction ([src/ml/](src/ml/))**
+- Entraîné sur les **872 096 vols réels opérés** au départ d'ATL et JFK (2024-2025), joints à la météo horaire observée à l'heure de départ prévue ([dataset.py](src/ml/dataset.py)). Le jeu synthétique a été supprimé.
+- Une seule fonction de features pour l'entraînement, l'API et le dashboard : pas d'écart entre entraînement et production ; uniquement des informations connues avant le départ (pas de fuite de la cible).
+- **Optimisé** : référence naïve, régression logistique et gradient boosting comparés en validation croisée temporelle, recherche aléatoire d'hyperparamètres, seuil de décision choisi sur une période distincte, plafonnement des minutes prédites.
+- Résultats sur les 3 derniers mois (103 583 vols jamais vus) : ROC AUC 0,68 ; PR AUC 0,37 contre 0,22 pour le hasard ; erreur moyenne sur le retard de 19,1 min contre 22,8 min pour la référence. L'ajout du registre FAA (âge de l'avion) ne change pas ces résultats : l'effet de l'avion est déjà porté par la compagnie (section 2.4 du rapport).
+- Interprétabilité : importance par permutation, exposée par l'API et le dashboard.
+
+**MLflow** : un run par entraînement (paramètres, métriques, importances), un run enfant par candidat, classifieur et régresseur inscrits au Model Registry (`dst-airlines-delay-classifier`, `dst-airlines-delay-regressor`).
+
+**Dashboard ([src/dashboard/](src/dashboard/))** : carte temps réel des avions autour des aéroports, retards historiques filtrables (heure, jour, mois, compagnie), tableau par avion et historique des vols de l'avion sélectionné, simulateur de prédiction.
+
+**Limites restantes**
+- Performance modeste mais réaliste : sans information sur les retards en cascade (avion arrivant en retard) ni sur la congestion, le modèle n'explique qu'une partie des retards. Voir les pistes du rapport.
+- Pas de tableau de bord Power BI (Dash seul, ce qui est autorisé par le référentiel).
+- MLflow tourne en local (`mlflow ui`), pas dans le `docker-compose`.
 
 ### Étape 4 — Déploiement (Livrable n°6) : 🟡 partiel
 
@@ -428,7 +512,7 @@ Quand tu (Claude Code) interviens sur ce repo :
 ### Étape 5 — Automatisation du déploiement (Livrable n°7) : ❌ non conforme
 
 **En place**
-- Code centralisé sur GitHub, avec une CI GitHub Actions ([ci.yml](.github/workflows/ci.yml)) qui lance ruff + 50 tests à chaque push et pull request.
+- Code centralisé sur GitHub, avec une CI GitHub Actions ([ci.yml](.github/workflows/ci.yml)) qui lance ruff + 77 tests (dont l'intégration sur un service PostgreSQL) à chaque push et pull request.
 - Prometheus collecte les métriques de l'API ; un conteneur Grafana est présent.
 - Squelette Terraform AWS ([main.tf](infra/terraform/main.tf)) : provider et variables seulement, **aucune ressource**, jamais appliqué.
 
@@ -444,9 +528,127 @@ Quand tu (Claude Code) interviens sur ce repo :
 
 | Priorité | Action | Débloque |
 |---|---|---|
-| 1 | Télécharger les ZIP BTS (avec `DEP_DELAY`, `ARR_DELAY`) et les fichiers FAA, puis lancer `just warehouse` | Étape 2 sur données réelles |
-| 2 | Entraîner le modèle sur `fact_flights` ⨝ `dim_weather` ⨝ `dim_aircraft`, avec des features alignées entre entraînement et inférence, et supprimer le jeu synthétique | Livrable n°5 (ML) |
-| 3 | Ajouter recherche d'hyperparamètres + validation croisée temporelle, journaliser le modèle dans MLflow et l'inscrire au Model Registry | Livrable n°5 (« optimisé », versionning) |
-| 4 | Dashboard : carte des avions (positions OpenSky), filtres par aéroport, compagnie et avion, retards historiques BTS | Livrable n°5 (dashboard) |
-| 5 | API : endpoints de lecture (`/flights`, `/airports`, `/airlines`, `/weather`, `/predictions`) ; ajouter MLflow au `docker-compose` | Livrable n°6 |
-| 6 | Terraform : ressources AWS réelles (ECR, ECS, RDS) ; pipeline CD GitHub Actions avec déploiement blue/green ; Grafana provisionné (datasource, dashboards, alertes, seuils) ; KPI DevOps calculés depuis l'historique des déploiements | Livrable n°7 |
+| 1 | API : endpoints de lecture (`/flights`, `/airports`, `/airlines`, `/weather`, `/predictions`) ; ajouter MLflow au `docker-compose` | Livrable n°6 |
+| 2 | Terraform : ressources AWS réelles (ECR, ECS, RDS) ; pipeline CD GitHub Actions avec déploiement blue/green | Livrable n°7 |
+| 3 | Grafana provisionné (datasource, dashboards, alertes, seuils) ; KPI DevOps calculés depuis l'historique des déploiements ; actions automatiques sur alerte | Livrable n°7 |
+| 4 | Modèle : features de retard en cascade et de congestion (cf. rapport de modélisation), rotation de l'avion dans la journée | Amélioration du livrable n°5 |
+| 5 | Planifier la collecte (cron ou Airflow) et le réentraînement | Étapes 2-3 en continu |
+
+## 13. Tests d'exécution
+
+Deux niveaux de vérification : les **tests automatisés** (rapides, sans réseau, lancés aussi par la CI), puis une **recette d'exécution de bout en bout** qui fait tourner chaque brique sur de vraies données.
+
+### 13.1 Tests automatisés
+
+```bash
+source .venv/bin/activate
+
+# Lint + tests unitaires (identique à la CI GitHub Actions)
+ruff check src tests && pytest -q                       # ou : just test
+
+# + test d'intégration sur un vrai PostgreSQL (base docker-compose démarrée)
+docker compose up -d db
+WAREHOUSE_TEST_DATABASE_URL=postgresql://dst:dst@localhost:5432/dst_airlines pytest -q   # ou : just test-integration
+
+# Un seul fichier, un seul test, en mode verbeux
+pytest tests/test_model.py -v
+pytest tests/test_dashboard.py -k aircraft -v
+```
+
+Résultat attendu : `ruff` affiche `All checks passed!` et `pytest` n'affiche aucun échec. Sans `WAREHOUSE_TEST_DATABASE_URL`, le test d'intégration est signalé `skipped` (normal). Le test d'intégration travaille dans un schéma PostgreSQL temporaire (`it_xxxxxxxx`) supprimé à la fin : il ne modifie pas les tables de la base.
+
+| Fichier | Ce qui est vérifié |
+|---|---|
+| `test_collector.py` | Clients API (OpenSky, Open-Meteo, OpenWeather, OpenFlights, Meteostat, BTS) : parsing, sauvegarde brute, reprise sur quota 429 et erreurs réseau sans crash (réseau simulé) |
+| `test_etl.py` | Pipeline temps réel : vols, météo, positions des avions, jointure, écriture idempotente en base |
+| `test_bts.py` | Transformation BTS : formats d'export et mensuel, filtrage ATL/JFK, typage, dédoublonnage, calcul du retard au passage de minuit |
+| `test_dimensions.py` | Dimensions aéroports, compagnies, avions (FAA), météo ; conversion de l'heure locale en UTC (heure d'été/hiver) |
+| `test_warehouse.py` | Chargement : URL de connexion, conversion des valeurs manquantes, requêtes idempotentes, schéma rejouable |
+| `test_model.py` | Features, cibles, découpage temporel, seuil de décision, plafonnement des minutes, rejet d'un modèle d'ancien format, entraînement complet avec MLflow (le modèle doit battre la référence naïve) |
+| `test_evaluate.py` | Génération des figures et des chiffres du rapport de modélisation |
+| `test_score.py` | Scoring via l'API (HTTP simulé) : format des requêtes, cible jamais envoyée, comparaison au réel, erreurs isolées, API injoignable, fichier CSV |
+| `test_api.py` | `/health`, `/predict` (avec et sans modèle), validation des entrées (HTTP 422) |
+| `test_dashboard.py` | Callbacks des 3 onglets (carte, historique, avion sélectionné, prédiction) et messages en cas de source indisponible |
+| `test_integration_warehouse.py` | Chaîne réelle sur PostgreSQL : ZIP BTS → transformation → chargement ×2 (sans doublon) → jeu d'entraînement → requêtes du dashboard |
+
+### 13.2 Recette d'exécution de bout en bout
+
+À dérouler dans l'ordre depuis la racine du projet, venv activé, `.env` renseigné (`WAREHOUSE_DATABASE_URL`, `PILOT_AIRPORTS=ATL,JFK`).
+
+**0. Base de données**
+
+```bash
+docker compose up -d db
+docker compose exec db pg_isready -U dst -d dst_airlines
+```
+Attendu : `accepting connections`.
+
+**1. Collecte temps réel (étape 1) et pipeline temps réel (étape 2)**
+
+```bash
+python -m src.collector.flights_client
+python -m src.collector.weather_client
+python -m src.etl.pipeline
+ls data/raw/ | tail -4
+```
+Attendu : des fichiers `flights_ATL_*.json`, `flights_JFK_*.json`, `weather_*_*.json` horodatés, et un `data/processed/flights_weather_*.csv`. En cas de quota OpenSky dépassé, un avertissement est logué et le script se termine sans erreur.
+
+**2. Entrepôt historique (étape 2)**
+
+```bash
+just warehouse        # ou les commandes de la section 8, ~1 h pour 24 mois
+```
+Contrôle :
+```bash
+docker compose exec db psql -U dst -d dst_airlines -c "
+  SELECT 'fact_flights' AS t, COUNT(*) FROM fact_flights UNION ALL
+  SELECT 'dim_airport', COUNT(*) FROM dim_airport UNION ALL
+  SELECT 'dim_airline', COUNT(*) FROM dim_airline UNION ALL
+  SELECT 'dim_weather', COUNT(*) FROM dim_weather UNION ALL
+  SELECT 'vols sans météo', COUNT(*) FROM fact_flights f
+    LEFT JOIN dim_weather w ON w.airport_iata_code = f.origin AND w.weather_time_utc = f.fl_time_utc_hour
+    WHERE w.temp IS NULL;"
+```
+Attendu (2024-2025) : 884 451 vols, 2 aéroports, 1 778 compagnies, 35 088 relevés météo horaires, et environ 200 vols seulement sans météo (trous de relevé des stations). Relancer `python -m src.etl.warehouse all` ne doit **pas** changer ces nombres (chargement idempotent).
+
+**3. Entraînement et MLflow (étape 3)**
+
+```bash
+python -m src.ml.train
+python -m src.ml.evaluate
+ls models/ docs/figures/
+mlflow ui --backend-store-uri sqlite:///mlflow.db --port 5000
+```
+Attendu : les logs affichent le score de validation croisée de chaque candidat, puis les métriques de test ; un nouveau `models/delay_model_<version>.pkl` est créé, et `src.ml.evaluate` régénère les 7 figures et `evaluation.json` de `docs/figures/` (chiffres cités dans le [rapport de modélisation](docs/rapport_modelisation.md)). Dans l'interface MLflow (http://localhost:5000) : expérience `dst-airlines-delay-prediction`, un run avec 3 runs enfants (`candidate-*`), et les modèles `dst-airlines-delay-classifier` / `dst-airlines-delay-regressor` dans l'onglet **Models**. Le PR AUC de test doit être nettement supérieur au taux de base (`test_base_rate`) et la MAE inférieure à celle de la référence (`baseline_mae_minutes`).
+
+**4. API (étapes 3-4)**
+
+```bash
+uvicorn src.api.main:app --port 8000      # ou via docker compose (service api)
+curl -s localhost:8000/health
+curl -s -X POST localhost:8000/predict -H "Content-Type: application/json" -d '{
+  "flight_id": "DL1234_20260115", "fl_date": "2026-01-15", "crs_dep_time": 1745,
+  "origin": "ATL", "dest": "LAX", "op_carrier": "DL", "distance": 1946,
+  "temp": 2.0, "prcp": 4.0, "wspd": 35.0, "pres": 1004}'
+curl -s localhost:8000/metrics | grep http_requests_total | head -3
+python -m src.ml.score
+```
+Attendu : `/health` renvoie la version du modèle chargé ; `/predict` renvoie `delay_probability`, `predicted_delayed`, `predicted_delay_minutes` et les facteurs principaux ; une heure invalide (`"crs_dep_time": 2500`) renvoie HTTP 422 ; `/metrics` expose les compteurs Prometheus ; `src.ml.score` affiche le tableau des 100 vols scorés avec `errors: 0` dans le résumé et écrit un CSV dans `data/output_scoring/`. L'API charge le modèle au démarrage : la redémarrer après un nouvel entraînement (`docker compose restart api`).
+
+**5. Dashboard (étape 3)**
+
+```bash
+python -m src.dashboard.app               # ou via docker compose (service dashboard)
+```
+Ouvrir http://localhost:8050 et vérifier :
+- **Carte temps réel** : des points autour d'ATL, puis de JFK après changement dans la liste ; l'heure de dernière observation correspond à l'étape 1.
+- **Retards historiques & avions** : les indicateurs et les 4 graphiques changent quand on filtre sur un aéroport ou une compagnie ; cliquer une ligne du tableau des avions affiche le nuage de ses vols (retard par date, seuil de 15 min en pointillé).
+- **Prédiction** : les métriques du modèle s'affichent ; augmenter la pluie et le vent ou décaler l'heure vers le soir doit augmenter la probabilité de retard.
+
+**6. Stack Docker complète (étape 4)**
+
+```bash
+docker compose up -d --build
+docker compose ps
+```
+Attendu : `db`, `api`, `dashboard`, `prometheus`, `grafana` à l'état `running` (le `collector` s'exécute une fois puis s'arrête) ; http://localhost:8000/docs, http://localhost:8050 et http://localhost:9090/targets (cible `dst-airlines-api` à l'état UP) répondent.

@@ -30,7 +30,11 @@ def get_model() -> DelayModel | None:
     if _model is None:
         path = latest_model_path()
         if path is not None:
-            _model = DelayModel.load(path)
+            try:
+                _model = DelayModel.load(path)
+            except TypeError:
+                # Modèle d'un format antérieur : l'API démarre quand même et /predict répond 503
+                logger.warning("Modèle %s d'un format antérieur : relancer `python -m src.ml.train`", path.name)
     return _model
 
 
@@ -79,12 +83,14 @@ def predict(request: PredictionRequest) -> PredictionResponse:
             detail="Aucun modèle entraîné disponible. Lancer `python -m src.ml.train`.",
         )
 
-    features = pd.DataFrame([request.model_dump(exclude={"flight_id"})])
-    delay_probability, predicted_delay_minutes = model.predict(features)
+    raw = pd.DataFrame([request.model_dump(exclude={"flight_id"})])
+    delay_probability, predicted_delay_minutes = model.predict(raw)
 
     response = PredictionResponse(
         flight_id=request.flight_id,
         delay_probability=float(delay_probability[0]),
+        predicted_delayed=bool(model.is_delayed(delay_probability)[0]),
+        decision_threshold=model.threshold,
         predicted_delay_minutes=float(predicted_delay_minutes[0]),
         model_version=model.model_version,
         feature_importances=model.feature_importances(),

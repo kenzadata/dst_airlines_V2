@@ -22,8 +22,10 @@ import pandas as pd
 import psycopg2
 from dotenv import load_dotenv
 from psycopg2.extras import execute_values
+from sqlalchemy import create_engine
 
 from src.etl.bts import PROCESSED_BTS_DIR
+from src.etl.db import sqlalchemy_url
 from src.etl.dimensions import (
     DIM_AIRCRAFT_PATH,
     DIM_AIRLINE_PATH,
@@ -44,7 +46,7 @@ PAGE_SIZE = 5_000
 FACT_COLUMNS = [
     "FL_DATE", "OP_UNIQUE_CARRIER", "OP_CARRIER", "TAIL_NUM", "OP_CARRIER_FL_NUM",
     "ORIGIN_AIRPORT_ID", "ORIGIN", "DEST_AIRPORT_ID", "DEST",
-    "CRS_DEP_TIME", "DEP_TIME", "ARR_TIME", "CANCELLED", "DIVERTED",
+    "CRS_DEP_TIME", "DEP_TIME", "DEP_DELAY", "ARR_TIME", "ARR_DELAY", "CANCELLED", "DIVERTED",
     "CRS_ELAPSED_TIME", "ACTUAL_ELAPSED_TIME", "AIR_TIME", "FLIGHTS", "DISTANCE",
     "CARRIER_DELAY", "WEATHER_DELAY", "NAS_DELAY", "SECURITY_DELAY", "LATE_AIRCRAFT_DELAY",
     "FL_TIME_UTC", "FL_TIME_UTC_HOUR",
@@ -65,6 +67,11 @@ def get_dsn() -> str:
 
 def connect(dsn: str | None = None):
     return psycopg2.connect(dsn or get_dsn(), connect_timeout=CONNECT_TIMEOUT)
+
+
+def get_engine(dsn: str | None = None):
+    """Moteur SQLAlchemy pour la lecture (`pd.read_sql`) par le ML et le dashboard."""
+    return create_engine(sqlalchemy_url(dsn or get_dsn()), connect_args={"connect_timeout": CONNECT_TIMEOUT})
 
 
 def apply_schema(conn) -> None:
@@ -104,6 +111,9 @@ def load_dim_airline(conn, path: Path = DIM_AIRLINE_PATH) -> None:
 
 
 def load_dim_aircraft(conn, path: Path = DIM_AIRCRAFT_PATH) -> None:
+    if not path.exists():  # registre FAA optionnel (téléchargement manuel)
+        logger.warning("%s absent : dim_aircraft non chargée", path)
+        return
     df = pd.read_parquet(path)
     for col in ("YEAR_MFR", "AIRCRAFT_AGE"):
         df[col] = df[col].astype("Int64")  # SMALLINT nullable

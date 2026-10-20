@@ -32,10 +32,41 @@ PROCESSED_BTS_DIR = Path(__file__).resolve().parents[2] / "data" / "processed" /
 FINAL_COLUMNS = [
     "FL_DATE", "OP_UNIQUE_CARRIER", "OP_CARRIER", "TAIL_NUM", "OP_CARRIER_FL_NUM",
     "ORIGIN_AIRPORT_ID", "ORIGIN", "DEST_AIRPORT_ID", "DEST",
-    "CRS_DEP_TIME", "DEP_TIME", "ARR_TIME", "CANCELLED", "DIVERTED",
+    "CRS_DEP_TIME", "DEP_TIME", "DEP_DELAY", "ARR_TIME", "ARR_DELAY", "CANCELLED", "DIVERTED",
     "CRS_ELAPSED_TIME", "ACTUAL_ELAPSED_TIME", "AIR_TIME", "FLIGHTS", "DISTANCE",
     "CARRIER_DELAY", "WEATHER_DELAY", "NAS_DELAY", "SECURITY_DELAY", "LATE_AIRCRAFT_DELAY",
 ]
+
+# Les fichiers mensuels pré-zippés du BTS (bts_client) nomment les colonnes en
+# CamelCase ; l'export personnalisé de transtats les nomme comme FINAL_COLUMNS.
+PREZIP_RENAME = {
+    "FlightDate": "FL_DATE",
+    "Reporting_Airline": "OP_UNIQUE_CARRIER",
+    "IATA_CODE_Reporting_Airline": "OP_CARRIER",
+    "Tail_Number": "TAIL_NUM",
+    "Flight_Number_Reporting_Airline": "OP_CARRIER_FL_NUM",
+    "OriginAirportID": "ORIGIN_AIRPORT_ID",
+    "Origin": "ORIGIN",
+    "DestAirportID": "DEST_AIRPORT_ID",
+    "Dest": "DEST",
+    "CRSDepTime": "CRS_DEP_TIME",
+    "DepTime": "DEP_TIME",
+    "DepDelay": "DEP_DELAY",
+    "ArrTime": "ARR_TIME",
+    "ArrDelay": "ARR_DELAY",
+    "Cancelled": "CANCELLED",
+    "Diverted": "DIVERTED",
+    "CRSElapsedTime": "CRS_ELAPSED_TIME",
+    "ActualElapsedTime": "ACTUAL_ELAPSED_TIME",
+    "AirTime": "AIR_TIME",
+    "Flights": "FLIGHTS",
+    "Distance": "DISTANCE",
+    "CarrierDelay": "CARRIER_DELAY",
+    "WeatherDelay": "WEATHER_DELAY",
+    "NASDelay": "NAS_DELAY",
+    "SecurityDelay": "SECURITY_DELAY",
+    "LateAircraftDelay": "LATE_AIRCRAFT_DELAY",
+}
 
 INT_COLUMNS = [
     "ORIGIN_AIRPORT_ID", "DEST_AIRPORT_ID", "CRS_DEP_TIME", "DEP_TIME", "ARR_TIME",
@@ -47,20 +78,28 @@ DELAY_CAUSE_COLUMNS = [
 DEDUP_COLUMNS = ["FL_DATE", "ORIGIN", "DEST", "OP_CARRIER", "OP_CARRIER_FL_NUM"]
 
 
+def _is_useful_column(name: str) -> bool:
+    return name in FINAL_COLUMNS or name in PREZIP_RENAME
+
+
 def read_bts_file(filepath: str | Path) -> pd.DataFrame:
-    """Lit un fichier BTS brut, ZIP (sans extraction sur disque) ou CSV."""
+    """Lit un fichier BTS brut, ZIP (sans extraction sur disque) ou CSV, aux deux formats.
+
+    Seules les colonnes utiles sont lues : un fichier mensuel en compte 110.
+    """
     path = Path(filepath)
+    read = {"usecols": _is_useful_column, "low_memory": False}
     if path.suffix.lower() != ".zip":
-        return pd.read_csv(path, low_memory=False)
+        return pd.read_csv(path, **read).rename(columns=PREZIP_RENAME)
 
     with zipfile.ZipFile(path) as zf:
         csv_members = [m for m in zf.namelist() if m.lower().endswith(".csv")]
         if not csv_members:
             raise ValueError(f"Aucun CSV trouvé dans {path.name}")
-        # Les ZIPs BTS ne contiennent qu'un CSV, en général T_ONTIME_REPORTING.csv
+        # Les ZIPs BTS ne contiennent qu'un CSV (export transtats : T_ONTIME_REPORTING.csv)
         member = next((m for m in csv_members if m == "T_ONTIME_REPORTING.csv"), csv_members[0])
         with zf.open(member) as f:
-            return pd.read_csv(f, low_memory=False)
+            return pd.read_csv(f, **read).rename(columns=PREZIP_RENAME)
 
 
 def filter_flights(df: pd.DataFrame, airports: list[str]) -> pd.DataFrame:
@@ -72,6 +111,20 @@ def filter_flights(df: pd.DataFrame, airports: list[str]) -> pd.DataFrame:
     filtered = df[df["ORIGIN"].isin(airports)]
     logger.info("%s lignes brutes -> %s après filtrage ORIGIN in %s", len(df), len(filtered), airports)
     return filtered.copy()
+
+
+def derive_dep_delay(crs_dep_time: pd.Series, dep_time: pd.Series) -> pd.Series:
+    """Retard au départ (minutes) depuis deux heures HHMM, comme le calcule le BTS.
+
+    L'écart est ramené dans [-12 h, +12 h[ pour gérer le passage de minuit
+    (prévu 23h50, parti 00h10 -> +20 min).
+    """
+    def to_minutes(hhmm: pd.Series) -> pd.Series:
+        hhmm = pd.to_numeric(hhmm, errors="coerce") % 2400
+        return (hhmm // 100) * 60 + hhmm % 100
+
+    diff = to_minutes(dep_time) - to_minutes(crs_dep_time)
+    return ((diff + 720) % 1440 - 720).astype("float64")
 
 
 def clean_types(df: pd.DataFrame) -> pd.DataFrame:
@@ -89,9 +142,13 @@ def clean_types(df: pd.DataFrame) -> pd.DataFrame:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int64")
 
-    for col in ["AIR_TIME", "DISTANCE"]:
+    for col in ["AIR_TIME", "DISTANCE", "DEP_DELAY", "ARR_DELAY"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # Export transtats sans DEP_DELAY : on le recalcule depuis les horaires
+    if "DEP_DELAY" not in df.columns and {"CRS_DEP_TIME", "DEP_TIME"}.issubset(df.columns):
+        df["DEP_DELAY"] = derive_dep_delay(df["CRS_DEP_TIME"], df["DEP_TIME"])
 
     for col in ["CANCELLED", "DIVERTED"]:
         if col in df.columns:

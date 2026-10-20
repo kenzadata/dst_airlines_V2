@@ -1,0 +1,375 @@
+{
+  "model_version": "20261020225807",
+  "threshold": 0.2325543684065832,
+  "max_delay_minutes": 208.0,
+  "figures": [
+    "taux_retard_heure.png",
+    "taux_retard_mois.png",
+    "taux_retard_age_avion.png",
+    "courbes_roc_pr.png",
+    "calibration.png",
+    "importances.png",
+    "regresseur_par_tranche.png"
+  ],
+  "data": {
+    "flights": 872096,
+    "train_flights": 768513,
+    "test_flights": 103583,
+    "period": [
+      "2024-01-01",
+      "2025-12-31"
+    ],
+    "test_period": [
+      "2025-10-01",
+      "2025-12-31"
+    ],
+    "delay_rate": 0.213102685942832,
+    "delay_rate_by_origin": {
+      "ATL": 0.2156,
+      "JFK": 0.206
+    },
+    "flights_by_origin": {
+      "ATL": 648397,
+      "JFK": 223699
+    },
+    "delay_minutes_quantiles": {
+      "p50": 0.0,
+      "p75": 10.0,
+      "p90": 45.0,
+      "p99": 208.0
+    },
+    "mean_delay_minutes": 15.635212178475765,
+    "missing_rate": {
+      "origin": 0.0,
+      "dest": 0.0,
+      "op_carrier": 0.0,
+      "coco": 0.0007,
+      "dep_hour": 0.0,
+      "day_of_week": 0.0,
+      "month": 0.0,
+      "distance": 0.0,
+      "crs_elapsed_time": 0.0,
+      "aircraft_age": 0.0821,
+      "temp": 0.0002,
+      "prcp": 0.0011,
+      "wspd": 0.0002,
+      "pres": 0.0002
+    }
+  },
+  "aircraft": {
+    "coverage": 0.9783578872050783,
+    "age_known": 0.9179172935089714,
+    "median_age": 14.0,
+    "delay_rate_age_unknown": 0.19118797496647297,
+    "by_age": [
+      {
+        "age_bucket": "0-5",
+        "flights": 112666,
+        "delay_rate": 0.2523
+      },
+      {
+        "age_bucket": "6-10",
+        "flights": 181561,
+        "delay_rate": 0.2286
+      },
+      {
+        "age_bucket": "11-15",
+        "flights": 119717,
+        "delay_rate": 0.181
+      },
+      {
+        "age_bucket": "16-20",
+        "flights": 90301,
+        "delay_rate": 0.1921
+      },
+      {
+        "age_bucket": "21-25",
+        "flights": 141127,
+        "delay_rate": 0.2115
+      },
+      {
+        "age_bucket": "> 25",
+        "flights": 155140,
+        "delay_rate": 0.2151
+      }
+    ],
+    "by_manufacturer": [
+      {
+        "manufacturer": "BOEING",
+        "flights": 429112,
+        "delay_rate": 0.1979
+      },
+      {
+        "manufacturer": "AIRBUS",
+        "flights": 163665,
+        "delay_rate": 0.2524
+      },
+      {
+        "manufacturer": "BOMBARDIER INC",
+        "flights": 64532,
+        "delay_rate": 0.1731
+      },
+      {
+        "manufacturer": "AIRBUS SAS",
+        "flights": 61750,
+        "delay_rate": 0.2299
+      },
+      {
+        "manufacturer": "AIRBUS INDUSTRIE",
+        "flights": 45167,
+        "delay_rate": 0.2145
+      },
+      {
+        "manufacturer": "AIRBUS CANADA LP",
+        "flights": 27473,
+        "delay_rate": 0.3048
+      },
+      {
+        "manufacturer": "EMBRAER-EMPRESA BRASILEIRA DE",
+        "flights": 19081,
+        "delay_rate": 0.1604
+      },
+      {
+        "manufacturer": "AIRBUS S A S",
+        "flights": 14583,
+        "delay_rate": 0.2393
+      },
+      {
+        "manufacturer": "EMBRAER S A",
+        "flights": 12454,
+        "delay_rate": 0.1559
+      },
+      {
+        "manufacturer": "EMBRAER",
+        "flights": 11295,
+        "delay_rate": 0.1843
+      }
+    ],
+    "by_model": [
+      {
+        "aircraft_model": "717-200",
+        "flights": 96092,
+        "delay_rate": 0.1752
+      },
+      {
+        "aircraft_model": "737-9GPER",
+        "flights": 61394,
+        "delay_rate": 0.1541
+      },
+      {
+        "aircraft_model": "A321-213",
+        "flights": 55383,
+        "delay_rate": 0.2279
+      },
+      {
+        "aircraft_model": "CL-600-2D24",
+        "flights": 54298,
+        "delay_rate": 0.1655
+      },
+      {
+        "aircraft_model": "A321-211",
+        "flights": 48914,
+        "delay_rate": 0.2298
+      },
+      {
+        "aircraft_model": "757-232",
+        "flights": 46544,
+        "delay_rate": 0.2477
+      },
+      {
+        "aircraft_model": "A321-271NX",
+        "flights": 40662,
+        "delay_rate": 0.2386
+      },
+      {
+        "aircraft_model": "ERJ 170-200 LR",
+        "flights": 39039,
+        "delay_rate": 0.1559
+      },
+      {
+        "aircraft_model": "A321-231",
+        "flights": 35043,
+        "delay_rate": 0.2105
+      },
+      {
+        "aircraft_model": "737-900ER",
+        "flights": 32809,
+        "delay_rate": 0.1723
+      }
+    ]
+  },
+  "classifier": {
+    "roc_auc": 0.6843809769823533,
+    "pr_auc": 0.3745296112675443,
+    "base_rate": 0.21744880916752748,
+    "confusion": {
+      "tn": 67458,
+      "fp": 13601,
+      "fn": 13751,
+      "tp": 8773
+    },
+    "precision": 0.39210690980602486,
+    "recall": 0.38949564908542,
+    "flagged_share": 0.21600069509475492,
+    "mean_predicted_probability": 0.1737310193815969,
+    "top_decile_delay_rate": 0.463216837227264,
+    "lift_top_decile": 2.1302339571351308
+  },
+  "calibration": [
+    {
+      "decile": 0,
+      "predicted": 0.0709,
+      "observed": 0.0747,
+      "flights": 10359
+    },
+    {
+      "decile": 1,
+      "predicted": 0.0878,
+      "observed": 0.1066,
+      "flights": 10358
+    },
+    {
+      "decile": 2,
+      "predicted": 0.1026,
+      "observed": 0.1267,
+      "flights": 10358
+    },
+    {
+      "decile": 3,
+      "predicted": 0.1187,
+      "observed": 0.1535,
+      "flights": 10358
+    },
+    {
+      "decile": 4,
+      "predicted": 0.1367,
+      "observed": 0.1773,
+      "flights": 10359
+    },
+    {
+      "decile": 5,
+      "predicted": 0.1569,
+      "observed": 0.2078,
+      "flights": 10358
+    },
+    {
+      "decile": 6,
+      "predicted": 0.1828,
+      "observed": 0.2516,
+      "flights": 10358
+    },
+    {
+      "decile": 7,
+      "predicted": 0.2183,
+      "observed": 0.2771,
+      "flights": 10358
+    },
+    {
+      "decile": 8,
+      "predicted": 0.2715,
+      "observed": 0.3361,
+      "flights": 10358
+    },
+    {
+      "decile": 9,
+      "predicted": 0.391,
+      "observed": 0.4632,
+      "flights": 10359
+    }
+  ],
+  "by_origin": [
+    {
+      "segment": "ATL",
+      "flights": 77903,
+      "base_rate": 0.214,
+      "roc_auc": 0.677,
+      "pr_auc": 0.3602
+    },
+    {
+      "segment": "JFK",
+      "flights": 25680,
+      "base_rate": 0.228,
+      "roc_auc": 0.7047,
+      "pr_auc": 0.4171
+    }
+  ],
+  "by_month": [
+    {
+      "segment": "2025-10",
+      "flights": 36298,
+      "base_rate": 0.1783,
+      "roc_auc": 0.6775,
+      "pr_auc": 0.3219
+    },
+    {
+      "segment": "2025-11",
+      "flights": 33635,
+      "base_rate": 0.1949,
+      "roc_auc": 0.6737,
+      "pr_auc": 0.3412
+    },
+    {
+      "segment": "2025-12",
+      "flights": 33650,
+      "base_rate": 0.2822,
+      "roc_auc": 0.6619,
+      "pr_auc": 0.4245
+    }
+  ],
+  "importances": {
+    "dep_hour": 0.0791,
+    "op_carrier": 0.0389,
+    "month": 0.0348,
+    "day_of_week": 0.0241,
+    "dest": 0.0215,
+    "coco": 0.0136,
+    "temp": 0.0071,
+    "pres": 0.0041,
+    "prcp": 0.0032,
+    "origin": 0.0022,
+    "wspd": 0.0017,
+    "aircraft_age": 0.0014,
+    "distance": 0.0007,
+    "crs_elapsed_time": 0.0002
+  },
+  "regressor": {
+    "mae": 19.13358507536717,
+    "baseline_mae": 22.783057910771582,
+    "mean_observed": 15.89105355125841,
+    "mean_predicted": 11.245134389923694,
+    "correlation": 0.2062966301526652,
+    "capped_share": 1.9308187636967455e-05,
+    "by_bucket": [
+      {
+        "bucket": "0",
+        "flights": 65105,
+        "observed": 0.0,
+        "predicted": 9.6
+      },
+      {
+        "bucket": "1-15",
+        "flights": 16653,
+        "observed": 6.6,
+        "predicted": 11.8
+      },
+      {
+        "bucket": "16-60",
+        "flights": 14160,
+        "observed": 32.4,
+        "predicted": 14.1
+      },
+      {
+        "bucket": "61-180",
+        "flights": 6225,
+        "observed": 100.2,
+        "predicted": 17.7
+      },
+      {
+        "bucket": "> 180",
+        "flights": 1440,
+        "observed": 314.2,
+        "predicted": 22.1
+      }
+    ]
+  }
+}

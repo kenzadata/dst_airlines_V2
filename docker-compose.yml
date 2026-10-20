@@ -22,6 +22,7 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql://dst:dst@db:5432/dst_airlines
+      WAREHOUSE_DATABASE_URL: postgresql://dst:dst@db:5432/dst_airlines
     depends_on:
       db:
         condition: service_healthy
@@ -37,6 +38,7 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql://dst:dst@db:5432/dst_airlines
+      WAREHOUSE_DATABASE_URL: postgresql://dst:dst@db:5432/dst_airlines
     depends_on:
       db:
         condition: service_healthy
@@ -52,6 +54,7 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql://dst:dst@db:5432/dst_airlines
+      WAREHOUSE_DATABASE_URL: postgresql://dst:dst@db:5432/dst_airlines
     depends_on:
       db:
         condition: service_healthy

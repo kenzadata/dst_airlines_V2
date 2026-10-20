@@ -82,3 +82,19 @@ def test_schema_file_is_replayable_without_data_loss():
     assert "DELETE FROM" not in sql
     assert "DROP TABLE" not in sql
     assert sql.count("CREATE TABLE IF NOT EXISTS") == 5
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("postgresql://dst:dst@db:5432/dst_airlines", "postgresql+psycopg2://dst:dst@db:5432/dst_airlines"),
+        ("postgres://u:p@host/db", "postgresql+psycopg2://u:p@host/db"),
+        ("postgresql+psycopg2://u:p@host/db", "postgresql+psycopg2://u:p@host/db"),
+        ("sqlite:///./data/processed/dst_airlines.db", "sqlite:///./data/processed/dst_airlines.db"),
+    ],
+)
+def test_sqlalchemy_url_pins_psycopg2_driver(url, expected):
+    from src.etl.db import sqlalchemy_url
+
+    assert sqlalchemy_url(url) == expected
+    assert warehouse.get_engine("postgresql://u:p@localhost/db").dialect.driver == "psycopg2"

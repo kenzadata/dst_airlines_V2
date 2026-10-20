@@ -21,7 +21,14 @@ from uuid import uuid4
 
 import pandas as pd
 
-from src.etl.db import Flight, Weather, get_engine, get_session_factory, init_db
+from src.etl.db import (
+    AircraftPosition,
+    Flight,
+    Weather,
+    get_engine,
+    get_session_factory,
+    init_db,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +87,48 @@ def flights_to_dataframe(records: list[dict[str, Any]]) -> pd.DataFrame:
     if df.empty:
         return df
     return df.drop_duplicates(subset=["flight_id", "observed_at"]).sort_values("observed_at")
+
+
+POSITION_COLUMNS = [
+    "id", "icao24", "callsign", "airport", "observed_at", "latitude", "longitude",
+    "altitude_m", "velocity_ms", "heading", "on_ground",
+]
+
+
+def positions_to_dataframe(records: list[dict[str, Any]]) -> pd.DataFrame:
+    """Positions des aéronefs (une ligne par aéronef et par contact), pour la carte."""
+    rows = []
+    for record in records:
+        for state in record.get("states", []):
+            icao24, last_contact = state.get("icao24"), state.get("last_contact")
+            if not icao24 or not last_contact or state.get("latitude") is None or state.get("longitude") is None:
+                continue
+            rows.append(
+                {
+                    "id": f"{icao24}_{last_contact}",
+                    "icao24": icao24,
+                    "callsign": (state.get("callsign") or "").strip() or None,
+                    "airport": record["airport"],
+                    "observed_at": datetime.fromtimestamp(last_contact, tz=UTC),
+                    "latitude": state["latitude"],
+                    "longitude": state["longitude"],
+                    "altitude_m": state.get("baro_altitude"),
+                    "velocity_ms": state.get("velocity"),
+                    "heading": state.get("true_track"),
+                    "on_ground": state.get("on_ground"),
+                }
+            )
+    df = pd.DataFrame(rows, columns=POSITION_COLUMNS)
+    return df.drop_duplicates(subset=["id"]) if not df.empty else df
+
+
+def upsert_positions(positions_df: pd.DataFrame, engine=None) -> None:
+    engine = engine or get_engine()
+    init_db(engine)
+    with get_session_factory(engine)() as session:
+        for row in positions_df.to_dict("records"):
+            session.merge(AircraftPosition(**{k: (None if pd.isna(v) else v) for k, v in row.items()}))
+        session.commit()
 
 
 def weather_to_dataframe(records: list[dict[str, Any]]) -> pd.DataFrame:
@@ -192,6 +241,7 @@ def run_pipeline(raw_dir: Path = RAW_DATA_DIR, processed_dir: Path = PROCESSED_D
     if not joined_df.empty:
         write_processed(joined_df, processed_dir)
     upsert_flights_and_weather(flights_df, weather_df, engine)
+    upsert_positions(positions_to_dataframe(load_raw_flight_records(raw_dir)), engine)
     return joined_df
 
 

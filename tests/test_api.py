@@ -1,38 +1,43 @@
 from __future__ import annotations
 
-import pandas as pd
 from fastapi.testclient import TestClient
 
 from src.api import main as api_main
 from src.etl.db import get_engine
-from src.ml.model import DelayModel, build_features
+from src.ml.model import (
+    DelayModel,
+    build_features,
+    build_targets,
+    make_hgb_classifier,
+    make_hgb_regressor,
+)
+from tests.test_model import make_flights
 
 _PREDICT_PAYLOAD = {
-    "flight_id": "abc123_20240101",
-    "origin_airport": "ATL",
-    "temperature": 10.0,
-    "wind_speed": 15.0,
-    "precipitation": 0.0,
-    "visibility": 9000.0,
-    "hour": 8,
+    "flight_id": "DL1234_20240115",
+    "fl_date": "2024-01-15",
+    "crs_dep_time": 1745,
+    "origin": "ATL",
+    "dest": "LAX",
+    "op_carrier": "DL",
+    "distance": 1946.0,
+    "temp": 4.5,
+    "prcp": 1.2,
+    "wspd": 25.0,
 }
 
 
 def _trained_model() -> DelayModel:
-    df = pd.DataFrame(
-        {
-            "observed_at": pd.Timestamp("2024-01-01T08:00", tz="UTC"),
-            "origin_airport": ["ATL", "JFK", "JFK", "ATL"],
-            "temperature": [10.0, 12.0, 15.0, 8.0],
-            "wind_speed": [10.0, 30.0, 5.0, 40.0],
-            "precipitation": [0.0, 5.0, 0.0, 8.0],
-            "visibility": [9000.0, 3000.0, 9500.0, 2000.0],
-            "delayed": [0, 1, 0, 1],
-            "delay_minutes": [2.0, 30.0, 1.0, 45.0],
-        }
+    df = make_flights(n=200)
+    X = build_features(df)
+    delayed, minutes = build_targets(df)
+    return DelayModel(
+        model_version="test-version",
+        classifier=make_hgb_classifier(max_iter=10).fit(X, delayed),
+        regressor=make_hgb_regressor(max_iter=10).fit(X, minutes),
+        threshold=0.5,
+        importances={"prcp": 0.3, "wspd": 0.1},
     )
-    features = build_features(df)
-    return DelayModel.new("test-version").fit(features, df["delayed"], df["delay_minutes"])
 
 
 def test_health_without_model(monkeypatch, tmp_path):
@@ -58,8 +63,20 @@ def test_predict_returns_prediction(monkeypatch, tmp_path):
     body = response.json()
     assert body["flight_id"] == _PREDICT_PAYLOAD["flight_id"]
     assert 0.0 <= body["delay_probability"] <= 1.0
+    assert body["predicted_delayed"] == (body["delay_probability"] >= 0.5)
+    assert body["predicted_delay_minutes"] >= 0
     assert body["model_version"] == "test-version"
-    assert body["feature_importances"]
+    assert list(body["feature_importances"]) == ["prcp", "wspd"]
+
+
+def test_predict_rejects_invalid_departure_time(monkeypatch, tmp_path):
+    monkeypatch.setattr(api_main, "get_model", _trained_model)
+    monkeypatch.setattr(api_main, "get_engine", lambda: get_engine(f"sqlite:///{tmp_path}/test.db"))
+
+    with TestClient(api_main.app) as client:
+        response = client.post("/predict", json={**_PREDICT_PAYLOAD, "crs_dep_time": 2500})
+
+    assert response.status_code == 422
 
 
 def test_predict_without_model_returns_503(monkeypatch, tmp_path):
@@ -70,3 +87,15 @@ def test_predict_without_model_returns_503(monkeypatch, tmp_path):
         response = client.post("/predict", json=_PREDICT_PAYLOAD)
 
     assert response.status_code == 503
+
+
+def test_get_model_ignores_model_in_previous_format(monkeypatch, tmp_path):
+    import joblib
+
+    old_model = _trained_model()
+    del old_model.__dict__["threshold"]
+    joblib.dump(old_model, tmp_path / "delay_model_old.pkl")
+    monkeypatch.setattr(api_main, "_model", None)
+    monkeypatch.setattr(api_main, "latest_model_path", lambda: tmp_path / "delay_model_old.pkl")
+
+    assert api_main.get_model() is None
