@@ -16,6 +16,7 @@ psycopg2-binary>=2.9
 scikit-learn==1.9.1   # version figée : les modèles sérialisés exigent la même version à l'entraînement et en service
 xgboost>=2.0
 mlflow>=2.11
+skops==0.16.0   # sérialisation des modèles par MLflow : version figée (la 0.16 durcit les types acceptés)
 shap>=0.45
 joblib>=1.3
 

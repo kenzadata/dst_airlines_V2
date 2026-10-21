@@ -72,7 +72,16 @@ REGISTERED_REGRESSOR = "dst-airlines-delay-regressor"
 # MLflow 3 sérialise les modèles scikit-learn avec skops, qui refuse tout type
 # non déclaré. Types internes de nos pipelines (dtype de l'OrdinalEncoder,
 # validation d'entrée du gradient boosting), sans code arbitraire.
-SKOPS_TRUSTED_TYPES = ["numpy.dtype", "functools.partial", "sklearn.utils.validation.check_array"]
+# TreePredictor (arbres du gradient boosting, non approuvé par défaut depuis
+# skops 0.16) : un fichier forgé pourrait faire planter `predict`. Accepté car
+# les modèles journalisés ici ne proviennent que de ce script ; ne jamais
+# charger avec cette liste un modèle d'origine extérieure.
+SKOPS_TRUSTED_TYPES = [
+    "numpy.dtype",
+    "functools.partial",
+    "sklearn.utils.validation.check_array",
+    "sklearn.ensemble._hist_gradient_boosting.predictor.TreePredictor",
+]
 
 CLASSIFIER_SEARCH_SPACE = {
     "estimator__learning_rate": loguniform(0.02, 0.3),
